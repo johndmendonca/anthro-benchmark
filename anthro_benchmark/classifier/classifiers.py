@@ -14,6 +14,7 @@
 
 from typing import Dict, Any, Optional, List, Tuple
 from anthro_benchmark.core.llm_client import LLMClient
+from anthro_benchmark.core.roles import Role
 
 
 def create_prompt_for_cue(
@@ -237,7 +238,7 @@ class LLMClassifier:
             user_message=user_turn_message, assistant_message=assistant_turn_message
         )
 
-        messages_for_llm = [{"role": "user", "content": prompt}]
+        messages_for_llm = [{"role": Role.USER, "content": prompt}]
         raw_output_from_llm = self.llm_client.generate(messages_for_llm)
         explanation, score = self._process_raw_output(raw_output_from_llm)
         return score, explanation

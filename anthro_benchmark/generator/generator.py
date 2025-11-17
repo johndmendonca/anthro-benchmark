@@ -22,6 +22,7 @@ import pandas as pd
 
 
 from anthro_benchmark.core.llm_client import LLMClient
+from anthro_benchmark.core.roles import Role
 
 
 class LLMGenerationError(Exception):
@@ -298,9 +299,9 @@ class DialogueGenerator:
         target_history = []
 
         dialogue["turns"].append(
-            {"turn_index": 0, "role": "user", "message": initial_human_message}
+            {"turn_index": 0, "role": Role.USER, "message": initial_human_message}
         )
-        target_history.append({"role": "user", "content": initial_human_message})
+        target_history.append({"role": Role.USER, "content": initial_human_message})
         # user_history is not updated with the initial human message as the system prompt informs the User LLM about it.
 
         for i in range(self.num_turns):
@@ -314,13 +315,13 @@ class DialogueGenerator:
                 dialogue["turns"].append(
                     {
                         "turn_index": target_llm_turn_index_in_dialogue,
-                        "role": "assistant",
+                        "role": Role.ASSISTANT,
                         "message": target_message_content,
                     }
                 )
-                user_history.append({"role": "user", "content": target_message_content})
+                user_history.append({"role": Role.USER, "content": target_message_content})
                 target_history.append(
-                    {"role": "assistant", "content": target_message_content}
+                    {"role": Role.ASSISTANT, "content": target_message_content}
                 )
             except LLMGenerationError as e:
                 dialogue["metadata"][
@@ -338,15 +339,15 @@ class DialogueGenerator:
                     dialogue["turns"].append(
                         {
                             "turn_index": user_llm_turn_index_in_dialogue,
-                            "role": "user",
+                            "role": Role.USER,
                             "message": user_message_content,
                         }
                     )
                     user_history.append(
-                        {"role": "assistant", "content": user_message_content}
+                        {"role": Role.ASSISTANT, "content": user_message_content}
                     )
                     target_history.append(
-                        {"role": "user", "content": user_message_content}
+                        {"role": Role.USER, "content": user_message_content}
                     )
                 except LLMGenerationError as e:
                     dialogue["metadata"][
@@ -373,7 +374,7 @@ class DialogueGenerator:
             LLMGenerationError: If an error occurs during LLM generation.
         """
         try:
-            messages = [{"role": "system", "content": system_prompt}] + history
+            messages = [{"role": Role.SYSTEM, "content": system_prompt}] + history
             return self.user_llm.generate(messages)
         except Exception as e:
             print(f"Error getting user LLM response: {e}")
@@ -396,7 +397,7 @@ class DialogueGenerator:
             LLMGenerationError: If an error occurs during LLM generation.
         """
         try:
-            messages = [{"role": "system", "content": system_prompt}] + history
+            messages = [{"role": Role.SYSTEM, "content": system_prompt}] + history
             return self.target_llm.generate(messages)
         except Exception as e:
             print(f"Error getting target LLM response: {e}")
@@ -438,7 +439,7 @@ class DialogueGenerator:
                 assistant_message = ""
                 if i + 1 < len(turns_data):
                     assistant_turn_data = turns_data[i + 1]
-                    if assistant_turn_data["role"] == "assistant":
+                    if assistant_turn_data["role"] == Role.ASSISTANT:
                         assistant_message = assistant_turn_data["message"]
                     else:
                         print(
