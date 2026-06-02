@@ -15,10 +15,12 @@
 import importlib.resources
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 import pandas as pd
+from tqdm import tqdm
 
 
 from anthro_benchmark.core.llm_client import LLMClient
@@ -63,6 +65,10 @@ class DialogueGenerator:
         cues: Optional[List[str]] = None,
         user_llm_config: Optional[Dict[str, Any]] = None,
         target_llm_config: Optional[Dict[str, Any]] = None,
+        user_api_base: Optional[str] = None,
+        user_api_key: Optional[str] = None,
+        target_api_base: Optional[str] = None,
+        target_api_key: Optional[str] = None,
         user_system_prompt: str = DEFAULT_USER_SYSTEM_PROMPT,
         target_system_prompt: Optional[str] = None,
         num_turns: int = 5,
@@ -72,6 +78,7 @@ class DialogueGenerator:
         use_all_variants_of_original_prompt: bool = True,  # if False, deduplicates by 'original_prompt' column
         output_dir: Optional[str] = None,
         default_csv_filename: Optional[str] = None,
+        max_workers: int = 16,
     ):
         """
         Initialize the dialogue generator with configuration options.
@@ -80,6 +87,8 @@ class DialogueGenerator:
             cues: List of specific behavior cues to filter prompts for.
             user_llm_config: Configuration for the user LLM (model type, params).
             target_llm_config: Configuration for the target LLM (model type, params).
+            api_base: Optional API base URL to apply to both LLMs when not already set.
+            api_key: Optional API key to apply to both LLMs when not already set.
             user_system_prompt: System prompt for the user LLM.
             target_system_prompt: System prompt for the target LLM.
             num_turns: Number of dialogue turn pair.
@@ -89,10 +98,21 @@ class DialogueGenerator:
             use_all_variants_of_original_prompt: If True, it uses all variants of the original prompt (i.e., all use domains and scenarios). If False, it deduplicates by 'original_prompt'.
             output_dir: Directory to save generated dialogues. Defaults to "./generated_dialogues".
             default_csv_filename: Default filename for the CSV output. Defaults to "dialogues.csv".
+            max_workers: Number of parallel workers for dialogue generation.
         """
         self.cues = cues or []
         self.user_llm_config = user_llm_config or {"model": "default_user_model"}
         self.target_llm_config = target_llm_config or {"model": "default_target_model"}
+
+        if user_api_base and "api_base" not in self.user_llm_config:
+            self.user_llm_config["api_base"] = user_api_base
+        if target_api_base and "api_base" not in self.target_llm_config:
+            self.target_llm_config["api_base"] = target_api_base
+        if user_api_key and "api_key" not in self.user_llm_config:
+            self.user_llm_config["api_key"] = user_api_key
+        if target_api_key and "api_key" not in self.target_llm_config:
+            self.target_llm_config["api_key"] = target_api_key
+
         self.user_system_prompt_template = user_system_prompt
         self.target_system_prompt_base = (
             target_system_prompt
@@ -106,6 +126,7 @@ class DialogueGenerator:
 
         self.output_dir = output_dir or "generated_dialogues"
         self.default_csv_filename = default_csv_filename or "dialogues.csv"
+        self.max_workers = max_workers
 
         self.dialogues = []
         self.prompts = self._load_prompts()
@@ -214,13 +235,38 @@ class DialogueGenerator:
         Returns:
             List of generated dialogue dictionaries
         """
-        self.dialogues = []
+        self.dialogues = [None] * self.num_dialogues
 
-        for i in range(self.num_dialogues):
-            prompt_data = self._select_prompt(i)
-
-            dialogue = self._generate_single_dialogue(prompt_data, i)
-            self.dialogues.append(dialogue)
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {
+                executor.submit(
+                    self._generate_single_dialogue, self._select_prompt(i), i
+                ): (i, self._select_prompt(i))
+                for i in range(self.num_dialogues)
+            }
+            with tqdm(total=self.num_dialogues, desc="Generating dialogues", unit="dialogue") as pbar:
+                for future in as_completed(futures):
+                    i, prompt_data = futures[future]
+                    try:
+                        self.dialogues[i] = future.result()
+                    except Exception as e:
+                        print(f"Dialogue {i} failed after retries: {e}")
+                        self.dialogues[i] = {
+                            "id": str(uuid.uuid4()),
+                            "metadata": {
+                                "timestamp": datetime.now().isoformat(),
+                                "category": prompt_data.get("category", "default"),
+                                "cue": prompt_data.get("cue", "default"),
+                                "prompt_text": prompt_data.get("prompt", ""),
+                                "user_llm": self.user_llm_config.get("model", "unknown"),
+                                "target_llm": self.target_llm_config.get("model", "unknown"),
+                                "dialogue_index": i,
+                                "status": "failed",
+                                "error": str(e),
+                            },
+                            "turns": [],
+                        }
+                    pbar.update(1)
 
         self.save_dialogues_to_csv()
 
@@ -265,8 +311,6 @@ class DialogueGenerator:
             or "have a general conversation"
         )  # Fallback scenario
 
-        print(f"Scenario text: {scenario_text}")
-        print(f"Initial human message: {initial_human_message}")
         formatted_user_llm_system_prompt = self.user_system_prompt_template.format(
             scenario=scenario_text, first_user_message=initial_human_message
         )

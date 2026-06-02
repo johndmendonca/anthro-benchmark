@@ -17,7 +17,21 @@ LLM client initialization and management for dialogue generation.
 """
 
 import dataclasses
+import logging
+import re
+from typing import Optional
+import litellm
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
+_THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+
+logging.getLogger("litellm").setLevel(logging.WARNING)
+logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 
 @dataclasses.dataclass
 class LLMClient:
@@ -25,24 +39,52 @@ class LLMClient:
 
     model: str
     temperature: float = 0.7
+    api_base: Optional[str] = None
+    api_key: Optional[str] = None
 
+    @staticmethod
+    def split_thinking(text: str) -> tuple[str, str]:
+        """Return response text and reasoning content."""
+        match = _THINK_RE.search(text)
+        if match is not None:
+            return text[match.end() :].strip(), match.group(1).strip()
+        parts = text.split("</think>", 1)
+        if len(parts) == 2:
+            return parts[1].strip(), parts[0].replace("<think>", "").strip()
+        return text.strip(), ""
+
+    @retry(
+        retry=retry_if_exception_type((
+            litellm.RateLimitError,
+            litellm.ServiceUnavailableError,
+            litellm.Timeout,
+            litellm.APIConnectionError,
+        )),
+        wait=wait_exponential(multiplier=1, min=2, max=60),
+        stop=stop_after_attempt(3),
+        reraise=True,
+    )
     def generate(self, messages: list) -> str:
         """
         Generate a response from the LLM.
 
         Args:
             messages: List of message dictionaries
-            **kwargs: Additional parameters to pass to the LLM
 
         Returns:
             Generated text response
         """
-        import litellm
+        completion_kwargs = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature,
+        }
+        if self.api_base:
+            completion_kwargs["api_base"] = self.api_base
+        if self.api_key:
+            completion_kwargs["api_key"] = self.api_key
 
-        response = litellm.completion(
-            model=self.model,
-            messages=messages,
-            temperature=self.temperature,
-        )
+        response = litellm.completion(**completion_kwargs)
         response_text = response.choices[0].message.content
-        return response_text
+
+        return self.split_thinking(response_text)[0]

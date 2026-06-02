@@ -53,6 +53,8 @@ export MISTRAL_API_KEY="your-mistral-api-key"
 
 You only need to set up the API keys for the LLM providers you intend to use. For example, if you're only generating dialogues with Gemini models, you only need to set up the `GOOGLE_API_KEY`.
 
+If you are using an OpenAI-compatible or Vertex-compatible endpoint through LiteLLM, you can also pass `--api-base` and `--api-key` directly to the CLI.
+
 ## Prompt sets
 
 The `prompt_sets` directory contains the prompt datasets used for dialogue generation. The primary file is:
@@ -86,6 +88,9 @@ anthro-eval generate --user-llm-model "gemini/gemini-1.5-flash" --target-llm-mod
 # Generate dialogues using prompts from multiple categories, with gemini-1.0-pro as the target
 anthro-eval generate --user-llm-model "gemini/gemini-1.5-flash" --target-llm-model "gemini/gemini-1.0-pro" --prompt-category-name "personhood" "relationship building" --num-dialogues 20 --output-dir generated_dialogues
 
+# Generate dialogues against a custom OpenAI-compatible endpoint
+anthro-eval generate --user-llm-model "openai/gpt-4o-mini" --target-llm-model "openai/gpt-4o-mini" --api-base "https://your-endpoint.example/v1" --api-key "your-key" --num-dialogues 10 --output-dir generated_dialogues
+
 # Generate dialogues filtering for specific behaviors within categories
 anthro-eval generate --user-llm-model "gemini/gemini-1.5-flash" --target-llm-model "gemini/gemini-1.0-pro" --prompt-category-name "internal states" --behaviors "emotions" "desires" --num-dialogues 5 --output-dir generated_dialogues
 ```
@@ -102,6 +107,9 @@ anthro-eval rate --dialogues-csv "generated_dialogues/your_dialogue_file.csv" --
 
 # Rate dialogues using multiple classifier models (gemini-1.0-pro and gemini-1.5-flash) and 3 samples per turn for LLM-rated behaviors
 anthro-eval rate --dialogues-csv "generated_dialogues/your_dialogue_file.csv" --classifier-model "gemini/gemini-1.5-pro" "gemini/gemini-1.5-flash" --behaviors-to-rate "empathy" "validation" --num-samples 3
+
+# Rate dialogues through a custom OpenAI-compatible endpoint
+anthro-eval rate --dialogues-csv "generated_dialogues/your_dialogue_file.csv" --classifier-model "openai/gpt-4o-mini" --api-base "https://your-endpoint.example/v1" --api-key "your-key"
 
 # Rate dialogues for all available behaviors defined in cue_definitions.py using a single classifier
 # This will include "first-person pronoun use" (rated by regex) if it's a key in cue_definitions.py

@@ -23,6 +23,9 @@ dependencies = [
     "pandas",
     "plotly",
     "kaleido",
+    "google-cloud-aiplatform>=1.38",
+    "tenacity",
+    "tqdm",
 ]
 
 [project.urls]

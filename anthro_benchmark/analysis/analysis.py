@@ -111,7 +111,7 @@ def add_category_counts(
         # sum only valid ratings (0 or 1), treat -1 as 0 for the sum
         df_analysis[category_col_name] = (
             df_analysis[relevant_cols]
-            .applymap(lambda x: x if x in [0, 1] else 0)
+            .map(lambda x: x if x in [0, 1] else 0)
             .sum(axis=1)
         )
         print(f"  Added column: {category_col_name}")
@@ -154,7 +154,7 @@ def calculate_summary_stats(
         if relevant_cols:
             # sum only 1s across all relevant columns and rows
             category_total = (
-                df[relevant_cols].applymap(lambda x: 1 if x == 1 else 0).sum().sum()
+                df[relevant_cols].map(lambda x: 1 if x == 1 else 0).sum().sum()
             )
         summary["category_totals"][category] = int(
             category_total

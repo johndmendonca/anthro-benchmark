@@ -41,6 +41,9 @@ def generate_dialogues_command(args):
     print(f"Configuration: {args}")
     print("-" * 30)
 
+    api_base = getattr(args, "api_base", None)
+    api_key = getattr(args, "api_key", None)
+
     # prepare LLM configurations
     user_llm_config = {
         "model": args.user_llm_model,
@@ -50,6 +53,12 @@ def generate_dialogues_command(args):
         "model": args.target_llm_model,
         "temperature": args.target_llm_temperature,
     }
+    if api_base:
+        user_llm_config["api_base"] = api_base
+        target_llm_config["api_base"] = api_base
+    if api_key:
+        user_llm_config["api_key"] = api_key
+        target_llm_config["api_key"] = api_key
 
     # handle system prompts
     user_system_prompt = args.user_system_prompt
@@ -101,6 +110,10 @@ def generate_dialogues_command(args):
             target_llm_config=target_llm_config,
             user_system_prompt=user_system_prompt,
             target_system_prompt=target_system_prompt,
+            user_api_base=args.user_api_base,
+            user_api_key=args.user_api_key,
+            target_api_base=args.target_api_base,
+            target_api_key=args.target_api_key,
             num_turns=args.num_turns,
             num_dialogues=args.num_dialogues,
             prompt_category_names=args.prompt_category_name,
@@ -108,6 +121,7 @@ def generate_dialogues_command(args):
             use_all_variants_of_original_prompt=not args.deduplicate_original_prompts,
             output_dir=args.output_dir,
             default_csv_filename=dynamic_csv_filename,
+            max_workers=args.generator_workers,
         )
 
         print("DialogueGenerator initialized.")
@@ -149,6 +163,8 @@ def rate_dialogues_command(args):
     Maps CLI args to library function parameters.
     """
     try:
+        api_base = getattr(args, "classifier_api_base", None)
+        api_key = getattr(args, "classifier_api_key", None)
         cues_to_rate_arg = (
             args.behaviors_to_rate
             if hasattr(args, "behaviors_to_rate") and args.behaviors_to_rate
@@ -159,9 +175,12 @@ def rate_dialogues_command(args):
             cues_to_rate=cues_to_rate_arg,
             classifier_models=args.classifier_model,
             classifier_temperature=args.classifier_temperature,
+            api_base=api_base,
+            api_key=api_key,
             num_samples=args.num_samples,
             output_rated_csv=getattr(args, "output_rated_csv", None),
             verbose=True,
+            max_workers=args.classifier_workers,
         )
         if not output_path:
             print("Warning: Rating process completed but didn't return an output path.")
@@ -245,7 +264,7 @@ def _parse_flags(_):
     llm_group.add_argument(
         "--user-llm-temperature",
         type=float,
-        default=0.7,
+        default=None,
         help="Temperature for User LLM.",
     )
     llm_group.add_argument(
@@ -254,7 +273,7 @@ def _parse_flags(_):
     llm_group.add_argument(
         "--target-llm-temperature",
         type=float,
-        default=0.7,
+        default=None,
         help="Temperature for Target LLM.",
     )
     llm_group.add_argument(
@@ -264,10 +283,30 @@ def _parse_flags(_):
         help="Custom system prompt for User LLM (string or path to .txt file).",
     )
     llm_group.add_argument(
+        "--user-api-base",
+        type=str,
+        help="Optional user API base URL for LiteLLM requests (useful for OpenAI-compatible or Vertex endpoints).",
+    )
+    llm_group.add_argument(
+        "--user-api-key",
+        type=str,
+        help="Optional user API key for LiteLLM requests.",
+    )
+    llm_group.add_argument(
         "--target-system-prompt",
         type=str,
         default="You are a helpful chatbot. Every one of your outputs should be a single message in a conversation.",
         help="Custom system prompt for Target LLM (string or path to .txt file).",
+    )
+    llm_group.add_argument(
+        "--target-api-base",
+        type=str,
+        help="Optional target API base URL for LiteLLM requests (useful for OpenAI-compatible or Vertex endpoints).",
+    )
+    llm_group.add_argument(
+        "--target-api-key",
+        type=str,
+        help="Optional target API key for LiteLLM requests.",
     )
 
     gen_control_group = gen_parser.add_argument_group("Generation control options")
@@ -279,6 +318,12 @@ def _parse_flags(_):
     )
     gen_control_group.add_argument(
         "--num-turns", type=int, default=5, help="Number of turns."
+    )
+    gen_control_group.add_argument(
+        "--generator-workers",
+        type=int,
+        default=16,
+        help="Number of parallel workers for dialogue generation (default: 16).",
     )
 
     output_group = gen_parser.add_argument_group("Output options")
@@ -320,8 +365,18 @@ def _parse_flags(_):
     rate_llm_group.add_argument(
         "--classifier-temperature",
         type=float,
-        default=0.7,
+        default=None,
         help="Temperature for the classifier LLM(s).",
+    )
+    rate_llm_group.add_argument(
+        "--classifier-api-base",
+        type=str,
+        help="Optional API base URL for LiteLLM requests (useful for OpenAI-compatible or Vertex endpoints).",
+    )
+    rate_llm_group.add_argument(
+        "--classifier-api-key",
+        type=str,
+        help="Optional API key for LiteLLM requests.",
     )
 
     rate_config_group = rate_parser.add_argument_group("Rating Configuration")
@@ -340,6 +395,12 @@ def _parse_flags(_):
         default=1,
         choices=[1, 3],
         help="Number of times to sample rating for each turn per model (1 or 3, default: 1).",
+    )
+    rate_config_group.add_argument(
+        "--classifier-workers",
+        type=int,
+        default=32,
+        help="Number of parallel workers for row-level classification (default: 32).",
     )
 
     rate_parser.set_defaults(func=rate_dialogues_command)

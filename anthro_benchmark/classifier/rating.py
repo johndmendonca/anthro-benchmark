@@ -19,6 +19,7 @@ and produces rated CSV output files.
 """
 
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import os
 import json
@@ -26,6 +27,7 @@ import re
 import sys
 
 import pandas as pd
+from tqdm import tqdm
 
 from anthro_benchmark.classifier.classifiers import LLMClassifier
 from anthro_benchmark.classifier.cue_definitions import CUE_DEFINITIONS
@@ -62,14 +64,50 @@ def sanitize_model_name(model_name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_.-]", "_", model_name)
 
 
+def _rate_single_row_llm(classifier, cue_to_rate, user_message, assistant_message, num_samples):
+    """Rate a single row with an LLM classifier. Returns (raw_samples, processed_samples, final_score)."""
+    if not assistant_message.strip():
+        return (
+            ["Skipped - Empty or invalid assistant message"] * num_samples,
+            [-1] * num_samples,
+            -1,
+        )
+
+    try:
+        explanations = []
+        scores = []
+        for _ in range(num_samples):
+            score, explanation = classifier.rate_turn_messages(
+                cue=cue_to_rate,
+                assistant_turn_message=assistant_message,
+                user_turn_message=user_message,
+            )
+            explanations.append(explanation)
+            scores.append(score)
+
+        if num_samples == 1:
+            final_score = scores[0] if scores else -1
+        else:
+            final_score = get_majority_vote(scores)
+
+        return explanations, scores, final_score
+    except Exception as e:
+        error_msg = f"Error: {e}"
+        print(f"Warning: rating failed after retries — {error_msg}", file=sys.stderr)
+        return [error_msg] * num_samples, [-1] * num_samples, -1
+
+
 def rate_dialogues(
     dialogues_csv_path: str,
     cues_to_rate: list[str],
     classifier_models: list[str],
     classifier_temperature: float = 0.7,
+    api_base: str = None,
+    api_key: str = None,
     num_samples: int = 1,
     output_rated_csv: str = None,
     verbose: bool = False,
+    max_workers: int = 32,
 ) -> str:
     """
     Rate dialogues for specified cues using one or more LLM classifiers.
@@ -80,6 +118,8 @@ def rate_dialogues(
         cues_to_rate: List of cue names to rate. If None or empty, rates all available cues.
         classifier_models: List of model names for the classifier LLM(s)
         classifier_temperature: Temperature for the classifier LLM(s)
+        api_base: Optional API base URL to use for classifier requests.
+        api_key: Optional API key to use for classifier requests.
         num_samples: Number of times to sample rating for each turn per model (1 or 3)
         output_rated_csv: Path for the output CSV. If None, generates a filename
         verbose: Whether to print progress information
@@ -232,6 +272,10 @@ def rate_dialogues(
                     "model": model_name,
                     "temperature": classifier_temperature,
                 }
+                if api_base:
+                    classifier_llm_config["api_base"] = api_base
+                if api_key:
+                    classifier_llm_config["api_key"] = api_key
                 classifier = LLMClassifier(
                     classifier_llm_config=classifier_llm_config,
                     cue_name=cue_to_rate,
@@ -239,67 +283,40 @@ def rate_dialogues(
                     cue_examples_list=custom_examples,
                 )
 
-                current_model_raw_samples_all_rows_llm = []
-                current_model_processed_samples_all_rows_llm = []
-                current_model_final_score_all_rows_llm = []
+                n_rows = len(dialogues_df)
+                current_model_raw_samples_all_rows_llm = [None] * n_rows
+                current_model_processed_samples_all_rows_llm = [None] * n_rows
+                current_model_final_score_all_rows_llm = [None] * n_rows
 
-                # row loop for LLM
-                for index, row in dialogues_df.iterrows():
-                    user_message_raw = row.get("user_message")
-                    assistant_message_raw = row.get("assistant_message")
-                    user_message = (
-                        str(user_message_raw) if pd.notna(user_message_raw) else ""
+                rows_data = [
+                    (
+                        str(r.get("user_message")) if pd.notna(r.get("user_message")) else "",
+                        str(r.get("assistant_message")) if pd.notna(r.get("assistant_message")) else "",
                     )
-                    assistant_message = (
-                        str(assistant_message_raw)
-                        if pd.notna(assistant_message_raw)
-                        else ""
-                    )
+                    for _, r in dialogues_df.iterrows()
+                ]
 
-                    row_raw_samples_llm = [
-                        "Skipped - Empty or invalid assistant message"
-                    ] * num_samples
-                    row_processed_samples_llm = [-1] * num_samples
-                    within_model_final_score_llm = -1
-
-                    if assistant_message.strip():
-                        current_ratings_explanations_llm = []
-                        current_ratings_scores_llm = []
-                        for _ in range(num_samples):
-                            score_llm, explanation_llm = classifier.rate_turn_messages(
-                                cue=cue_to_rate,
-                                assistant_turn_message=assistant_message,
-                                user_turn_message=user_message,
-                            )
-                            current_ratings_explanations_llm.append(explanation_llm)
-                            current_ratings_scores_llm.append(score_llm)
-
-                        row_raw_samples_llm = current_ratings_explanations_llm
-                        row_processed_samples_llm = current_ratings_scores_llm
-
-                        if num_samples == 1:
-                            within_model_final_score_llm = (
-                                row_processed_samples_llm[0]
-                                if row_processed_samples_llm
-                                else -1
-                            )
-                        elif num_samples > 1:
-                            within_model_final_score_llm = get_majority_vote(
-                                row_processed_samples_llm
-                            )
-
-                    current_model_raw_samples_all_rows_llm.append(row_raw_samples_llm)
-                    current_model_processed_samples_all_rows_llm.append(
-                        row_processed_samples_llm
-                    )
-                    current_model_final_score_all_rows_llm.append(
-                        within_model_final_score_llm
-                    )
-
-                    if verbose and (index + 1) % 50 == 0:
-                        print(
-                            f"    Rated {index + 1}/{len(dialogues_df)} turns for model '{model_name}'..."
-                        )
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    future_to_idx = {
+                        executor.submit(
+                            _rate_single_row_llm,
+                            classifier,
+                            cue_to_rate,
+                            user_msg,
+                            asst_msg,
+                            num_samples,
+                        ): idx
+                        for idx, (user_msg, asst_msg) in enumerate(rows_data)
+                    }
+                    desc = f"Rating '{cue_to_rate}' [{sanitized_model_name}]"
+                    with tqdm(total=n_rows, desc=desc, unit="row", disable=not verbose) as pbar:
+                        for future in as_completed(future_to_idx):
+                            idx = future_to_idx[future]
+                            raw, processed, final_score = future.result()
+                            current_model_raw_samples_all_rows_llm[idx] = raw
+                            current_model_processed_samples_all_rows_llm[idx] = processed
+                            current_model_final_score_all_rows_llm[idx] = final_score
+                            pbar.update(1)
 
                 model_results_raw_samples[sanitized_model_name] = (
                     current_model_raw_samples_all_rows_llm
@@ -401,6 +418,9 @@ def run_rating_process(
     num_samples: int = 1,
     output_rated_csv: str = None,
     verbose: bool = True,
+    api_base: str = None,
+    api_key: str = None,
+    max_workers: int = 32,
 ) -> str:
     """
     Main entry point for the rating process.
@@ -413,6 +433,7 @@ def run_rating_process(
         num_samples: Number of times to sample rating for each turn per model (1 or 3)
         output_rated_csv: Path for the output CSV. If None, generates a filename
         verbose: Whether to print progress information
+        max_workers: Number of parallel workers for row-level classification
 
     Returns:
         Path to the saved rated dialogues CSV
@@ -422,7 +443,10 @@ def run_rating_process(
         cues_to_rate=cues_to_rate if cues_to_rate else [],
         classifier_models=classifier_models,
         classifier_temperature=classifier_temperature,
+        api_base=api_base,
+        api_key=api_key,
         num_samples=num_samples,
         output_rated_csv=output_rated_csv,
         verbose=verbose,
+        max_workers=max_workers,
     )
