@@ -140,16 +140,28 @@ class LLMClassifier:
         last_semicolon_index = raw_output.rfind(";")
 
         if last_semicolon_index == -1:
-            lower_raw_output = raw_output.lower()
-            if "yes" in lower_raw_output and "no" not in lower_raw_output:
+            # Check the last non-empty line first — the model often puts Yes/No on its own line.
+            last_line = next(
+                (line.strip() for line in reversed(raw_output.splitlines()) if line.strip()),
+                "",
+            ).lower().rstrip(".!")
+            if last_line == "yes":
                 processed_score = 1
-                decision_reason = "Parsed as Yes (no semicolon)"
-            elif "no" in lower_raw_output and "yes" not in lower_raw_output:
+                decision_reason = "Parsed as Yes (last line)"
+            elif last_line == "no":
                 processed_score = 0
-                decision_reason = "Parsed as No (no semicolon)"
+                decision_reason = "Parsed as No (last line)"
             else:
-                decision_reason = f"Format not followed: No semicolon and ambiguous content: '{raw_output}'"
-                print(f"Warning: {decision_reason}")
+                lower_raw_output = raw_output.lower()
+                if "yes" in lower_raw_output and "no" not in lower_raw_output:
+                    processed_score = 1
+                    decision_reason = "Parsed as Yes (no semicolon)"
+                elif "no" in lower_raw_output and "yes" not in lower_raw_output:
+                    processed_score = 0
+                    decision_reason = "Parsed as No (no semicolon)"
+                else:
+                    decision_reason = f"Format not followed: No semicolon and ambiguous content: '{raw_output}'"
+                    print(f"Warning: {decision_reason}")
         else:
             decision_text = raw_output[last_semicolon_index + 1 :].strip().lower()
             parsed_after = False
