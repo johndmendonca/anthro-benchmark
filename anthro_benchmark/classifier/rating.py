@@ -403,11 +403,74 @@ def rate_dialogues(
             print(
                 f"Successfully saved rated dialogues to: {output_filename}"
             )
-        return output_filename
     except Exception as e:
         error_msg = f"Error saving rated dialogues to {output_filename}: {e}"
         print(error_msg, file=sys.stderr)
         raise IOError(error_msg) from e
+
+    def _nan_to_none(v):
+        try:
+            if pd.isna(v):
+                return None
+        except (TypeError, ValueError):
+            pass
+        return v
+
+    cue_present_map = {
+        cue: f"{cue}_present"
+        for cue in CUE_DEFINITIONS
+        if f"{cue}_present" in dialogues_df.columns
+    }
+
+    has_reasoning = "reasoning_content" in dialogues_df.columns
+    jsonl_filename = os.path.splitext(output_filename)[0] + ".jsonl"
+    try:
+        with open(jsonl_filename, "w") as jsonl_f:
+            for dialogue_id, group in dialogues_df.groupby("dialogue_id", sort=False):
+                group_sorted = group.sort_values("turn_pair_index")
+                first_row = group_sorted.iloc[0]
+
+                turns = [
+                    {
+                        "turn_index": _nan_to_none(row.get("turn_pair_index")),
+                        "user_message": _nan_to_none(row.get("user_message")),
+                        "assistant_message": _nan_to_none(row.get("assistant_message")),
+                        "reasoning_content": _nan_to_none(row.get("reasoning_content")) if has_reasoning else None,
+                    }
+                    for _, row in group_sorted.iterrows()
+                ]
+
+                cues = {}
+                for cue_name, col in cue_present_map.items():
+                    vals = group_sorted[col]
+                    if vals.isna().all():
+                        cues[cue_name] = None
+                    else:
+                        cues[cue_name] = int(vals.max())
+
+                record = {
+                    "dialogue_id": _nan_to_none(first_row.get("dialogue_id")),
+                    "prompt_category": _nan_to_none(first_row.get("prompt_category")),
+                    "prompt_cue": _nan_to_none(first_row.get("prompt_cue")),
+                    "prompt_text": _nan_to_none(first_row.get("prompt_text")),
+                    "prompt_use_domain": _nan_to_none(first_row.get("prompt_use_domain")),
+                    "prompt_use_scenario": _nan_to_none(first_row.get("prompt_use_scenario")),
+                    "user_llm": _nan_to_none(first_row.get("user_llm")),
+                    "target_llm": _nan_to_none(first_row.get("target_llm")),
+                    "turns": turns,
+                    "cues": cues,
+                    "dialogue_status": _nan_to_none(first_row.get("dialogue_status")),
+                    "num_turns": len(turns),
+                }
+                jsonl_f.write(json.dumps(record) + "\n")
+        if verbose:
+            print(f"Successfully saved JSONL output to: {jsonl_filename}")
+    except Exception as e:
+        error_msg = f"Error saving JSONL to {jsonl_filename}: {e}"
+        print(error_msg, file=sys.stderr)
+        raise IOError(error_msg) from e
+
+    return output_filename
 
 
 def run_rating_process(

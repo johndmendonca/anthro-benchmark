@@ -353,7 +353,7 @@ class DialogueGenerator:
 
             target_llm_turn_index_in_dialogue = len(dialogue["turns"])
             try:
-                target_message_content = self._get_target_llm_response(
+                target_message_content, target_reasoning = self._get_target_llm_response(
                     target_history, effective_target_system_prompt
                 )
                 dialogue["turns"].append(
@@ -361,6 +361,7 @@ class DialogueGenerator:
                         "turn_index": target_llm_turn_index_in_dialogue,
                         "role": Role.ASSISTANT,
                         "message": target_message_content,
+                        "reasoning_content": target_reasoning,
                     }
                 )
                 user_history.append({"role": Role.USER, "content": target_message_content})
@@ -426,7 +427,7 @@ class DialogueGenerator:
 
     def _get_target_llm_response(
         self, history: List[Dict[str, str]], system_prompt: str
-    ) -> str:
+    ) -> tuple[str, str]:
         """
         Get a response from the target LLM.
 
@@ -435,14 +436,14 @@ class DialogueGenerator:
             system_prompt: The specific system prompt.
 
         Returns:
-            Generated response text
+            Tuple of (response text, reasoning_content)
 
         Raises:
             LLMGenerationError: If an error occurs during LLM generation.
         """
         try:
             messages = [{"role": Role.SYSTEM, "content": system_prompt}] + history
-            return self.target_llm.generate(messages)
+            return self.target_llm.generate_with_reasoning(messages)
         except Exception as e:
             print(f"Error getting target LLM response: {e}")
             raise LLMGenerationError(
@@ -481,10 +482,12 @@ class DialogueGenerator:
                 user_message = user_turn_data["message"]
 
                 assistant_message = ""
+                reasoning_content = ""
                 if i + 1 < len(turns_data):
                     assistant_turn_data = turns_data[i + 1]
                     if assistant_turn_data["role"] == Role.ASSISTANT:
                         assistant_message = assistant_turn_data["message"]
+                        reasoning_content = assistant_turn_data.get("reasoning_content", "")
                     else:
                         print(
                             f"Warning: Expected assistant message at turn index {i+1} for dialogue {dialogue_id}, found role {assistant_turn_data['role']}"
@@ -503,6 +506,7 @@ class DialogueGenerator:
                     "turn_pair_index": i // 2,
                     "user_message": user_message,
                     "assistant_message": assistant_message,
+                    "reasoning_content": reasoning_content,
                     "dialogue_status": meta.get("status"),
                     "dialogue_error": meta.get("error", ""),
                 }
@@ -527,6 +531,7 @@ class DialogueGenerator:
                 "target_llm",
                 "user_message",
                 "assistant_message",
+                "reasoning_content",
                 "dialogue_status",
                 "dialogue_error",
             ]

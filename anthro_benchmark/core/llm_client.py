@@ -88,3 +88,20 @@ class LLMClient:
         response_text = response.choices[0].message.content
 
         return self.split_thinking(response_text)[0]
+
+    def generate_with_reasoning(self, messages: list) -> tuple[str, str]:
+        """Generate a response and return (text, reasoning_content)."""
+        completion_kwargs = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature,
+        }
+        if self.api_base:
+            completion_kwargs["api_base"] = self.api_base
+        if self.api_key:
+            completion_kwargs["api_key"] = self.api_key
+
+        response = litellm.completion(**completion_kwargs)
+        response_text = response.choices[0].message.content
+
+        return self.split_thinking(response_text)
