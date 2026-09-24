@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import importlib.resources
+import json
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -132,7 +133,11 @@ class DialogueGenerator:
         self.prompts = self._load_prompts()
 
         self.user_llm = LLMClient(**self.user_llm_config)
-        self.target_llm = LLMClient(**self.target_llm_config)
+        # DAWN_EVAL_LLM_KWARGS: litellm kwargs (e.g. reasoning effort, token cap) for the target LLM only.
+        self.target_llm = LLMClient(
+            **self.target_llm_config,
+            extra_kwargs=json.loads(os.environ.get("DAWN_EVAL_LLM_KWARGS") or "{}"),
+        )
 
     def _load_prompts(self) -> List[Dict[str, Any]]:
         """
