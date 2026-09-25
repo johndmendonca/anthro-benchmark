@@ -41,6 +41,7 @@ class LLMClient:
     temperature: float = 0.7
     api_base: Optional[str] = None
     api_key: Optional[str] = None
+    extra_kwargs: dict = dataclasses.field(default_factory=dict)
 
     @staticmethod
     def split_thinking(text: str) -> tuple[str, str]:
@@ -83,6 +84,7 @@ class LLMClient:
             completion_kwargs["api_base"] = self.api_base
         if self.api_key:
             completion_kwargs["api_key"] = self.api_key
+        completion_kwargs.update(self.extra_kwargs)
 
         response = litellm.completion(**completion_kwargs)
         response_text = response.choices[0].message.content
@@ -100,6 +102,7 @@ class LLMClient:
             completion_kwargs["api_base"] = self.api_base
         if self.api_key:
             completion_kwargs["api_key"] = self.api_key
+        completion_kwargs.update(self.extra_kwargs)
 
         response = litellm.completion(**completion_kwargs)
         response_text = response.choices[0].message.content
